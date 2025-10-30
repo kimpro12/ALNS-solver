@@ -107,13 +107,15 @@ class Metrics:
                 )
 
 
-def save_metrics_json(path, metrics, best, params):
+def save_metrics_json(path, metrics, best, params, *, extra=None):
     data = {
         "final_best_cost": float(best["best_cost"]),
         "final_total_dist": float(best["total_dist"]),
         "iters_logged": len(metrics.rows),
         "params": params,
     }
+    if extra:
+        data.update(extra)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
