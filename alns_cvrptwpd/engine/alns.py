@@ -1,8 +1,14 @@
 import numpy as np
 from .acceptance import accept_solution
 from .state_update import compute_route_states, refresh_route_loads
+from .penalty import (
+    init_penalty_state,
+    penalty_cost,
+    snapshot_penalty_state,
+    update_penalty_state,
+)
 from .sfr import SpatialFocus
-from ..config.enums import F_LOAD
+from ..config.enums import F_LOAD, F_PEN, P_CAP, P_DUR, P_TW, P_UNS
 from ..operators.destroy import (
     random_removal,
     route_pair_destroy,
@@ -94,12 +100,22 @@ def _clone_solution(sol):
         clone["route_dist"] = sol["route_dist"].copy()
     if "route_cost" in sol:
         clone["route_cost"] = sol["route_cost"].copy()
+    if "penalty_vec" in sol:
+        clone["penalty_vec"] = sol["penalty_vec"].copy()
+    if "penalty_cost" in sol:
+        clone["penalty_cost"] = float(sol["penalty_cost"])
+    if "penalty_weights" in sol:
+        clone["penalty_weights"] = sol["penalty_weights"].copy()
+    if "penalty_scale" in sol:
+        clone["penalty_scale"] = sol["penalty_scale"].copy()
+    if "penalty_violations" in sol:
+        clone["penalty_violations"] = sol["penalty_violations"].copy()
     clone["feasible"] = sol.get(
         "feasible", np.ones(sol["routes"].shape[0], dtype=bool)
     ).copy()
     return clone
 
-def _evaluate(sol, data):
+def _evaluate(sol, data, penalty_state):
     stats = compute_route_states(
         sol["routes"],
         sol["lens"],
@@ -116,17 +132,38 @@ def _evaluate(sol, data):
     sol["feasible"] = stats["feasible"]
     sol["route_dist"] = stats["route_dist"]
     sol["route_cost"] = stats["route_cost"]
+    sol["route_duration"] = stats["route_duration"]
+    sol["route_late"] = stats["route_late"]
+    sol["route_overload"] = stats["route_overload"]
+    sol["route_dur_excess"] = stats["route_dur_excess"]
 
     for r in range(sol["routes"].shape[0]):
         L = int(sol["lens"][r])
         sol["loads"][r] = stats["core_f"][r, L, F_LOAD] if L > 0 else 0.0
 
-    return stats["total_cost"]
+    penalty_vec = np.zeros(F_PEN, dtype=np.float64)
+    penalty_vec[P_CAP] = float(stats["route_overload"].sum())
+    penalty_vec[P_DUR] = float(stats["route_dur_excess"].sum())
+    penalty_vec[P_TW] = float(stats["route_late"].sum())
+    penalty_vec[P_UNS] = float(sol["unrouted"].size)
+
+    penalty_val = penalty_cost(penalty_state, penalty_vec)
+    sol["penalty_vec"] = penalty_vec
+    sol["penalty_cost"] = penalty_val
+
+    snap = snapshot_penalty_state(penalty_state)
+    sol["penalty_weights"] = snap["weights"]
+    sol["penalty_scale"] = snap["scale"]
+    sol["penalty_violations"] = snap["violations"]
+
+    return stats["total_cost"] + penalty_val
 
 def run_alns(solution, data, params, metrics):
     rng = np.random.default_rng()
     curr = _clone_solution(solution)
-    curr_cost = _evaluate(curr, data)
+    penalty_state = init_penalty_state(params)
+    curr_cost = _evaluate(curr, data, penalty_state)
+    update_penalty_state(penalty_state, curr["penalty_vec"])
     best = _clone_solution(curr)
     best["best_cost"] = curr_cost
 
@@ -337,7 +374,7 @@ def run_alns(solution, data, params, metrics):
                 route_weights=ls_route_weights,
             )
 
-        new_cost = _evaluate(cand, data)
+        new_cost = _evaluate(cand, data, penalty_state)
         prev_cost = curr_cost
         accepted = accept_solution(prev_cost, new_cost, temp, rng)
         status = "REJECT"
@@ -354,6 +391,8 @@ def run_alns(solution, data, params, metrics):
                 status = "ACCEPT"
         else:
             status = "REJECT"
+
+        update_penalty_state(penalty_state, curr["penalty_vec"])
 
         if status == "BEST":
             reward = reward_best
@@ -380,6 +419,10 @@ def run_alns(solution, data, params, metrics):
                 d_op=D_ops[d_idx],
                 r_op=R_ops[r_idx],
                 status=status,
+                penalty_cost=curr.get("penalty_cost", 0.0),
+                penalty_vec=curr.get("penalty_vec"),
+                penalty_weights=penalty_state["weights"],
+                penalty_violations=penalty_state["viol_ema"],
             )
 
         if sfr is not None:

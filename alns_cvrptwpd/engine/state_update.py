@@ -17,6 +17,7 @@ from ..config.enums import (
     T_START,
     T_WAIT,
     VEH_CAPACITY,
+    VEH_MAX_DUR,
 )
 
 
@@ -45,12 +46,21 @@ def compute_route_states(routes, lens, dist, node_f, veh_f, edge_vec=None, cost_
     feasible = np.ones(m, dtype=np.bool_)
     route_dist = np.zeros(m, dtype=np.float64)
     route_cost = np.zeros(m, dtype=np.float64)
+    route_duration = np.zeros(m, dtype=np.float64)
+    route_late = np.zeros(m, dtype=np.float64)
+    route_overload = np.zeros(m, dtype=np.float64)
+    route_dur_excess = np.zeros(m, dtype=np.float64)
 
     demand = node_f[:, NODE_DEMAND]
     service = node_f[:, NODE_SERVICE]
     tw_open = node_f[:, NODE_TW_OPEN]
     tw_close = node_f[:, NODE_TW_CLOSE]
-    capacities = veh_f[:, VEH_CAPACITY] if veh_f.ndim == 2 else veh_f
+    if veh_f.ndim == 2:
+        capacities = veh_f[:, VEH_CAPACITY]
+        max_dur = veh_f[:, VEH_MAX_DUR]
+    else:
+        capacities = veh_f
+        max_dur = np.full(m, np.inf, dtype=np.float64)
 
     for r in range(m):
         L = int(lens[r])
@@ -61,7 +71,9 @@ def compute_route_states(routes, lens, dist, node_f, veh_f, edge_vec=None, cost_
         vec_acc = np.zeros(vec_dim, dtype=np.float64) if vec_dim else None
         late_violation = False
         overload = False
+        dur_violation = False
         leave_time = 0.0
+        late_sum = 0.0
 
         for i in range(1, L + 1):
             v = int(routes[r, i - 1])
@@ -99,6 +111,7 @@ def compute_route_states(routes, lens, dist, node_f, veh_f, edge_vec=None, cost_
 
             if late > 1e-9:
                 late_violation = True
+            late_sum += max(late, 0.0)
 
             leave_time = leave
             prev = v
@@ -112,10 +125,21 @@ def compute_route_states(routes, lens, dist, node_f, veh_f, edge_vec=None, cost_
                 cost_acc += float(np.dot(step_vec, cost_w))
             else:
                 cost_acc += leg_dist
+            route_duration[r] = leave_time + leg_dist
+            dur_excess = max(route_duration[r] - max_dur[r], 0.0)
+            if dur_excess > 1e-9:
+                dur_violation = True
+            route_dur_excess[r] = dur_excess
+        else:
+            route_duration[r] = 0.0
+            route_dur_excess[r] = 0.0
+
+        route_overload[r] = max(load_acc - capacities[r], 0.0)
+        route_late[r] = late_sum
 
         route_dist[r] = dist_acc
         route_cost[r] = cost_acc
-        if overload or late_violation:
+        if overload or late_violation or dur_violation:
             feasible[r] = False
 
     total_dist = float(route_dist.sum())
@@ -129,6 +153,10 @@ def compute_route_states(routes, lens, dist, node_f, veh_f, edge_vec=None, cost_
         "feasible": feasible,
         "route_dist": route_dist,
         "route_cost": route_cost,
+        "route_duration": route_duration,
+        "route_late": route_late,
+        "route_overload": route_overload,
+        "route_dur_excess": route_dur_excess,
     }
 
 

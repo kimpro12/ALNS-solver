@@ -33,3 +33,10 @@ T_LATE  = 3
 T_SLACK = 4
 T_WAIT  = 5
 F_TIME_F = 6
+
+# penalty vector indices
+P_CAP = 0
+P_DUR = 1
+P_TW  = 2
+P_UNS = 3
+F_PEN = 4

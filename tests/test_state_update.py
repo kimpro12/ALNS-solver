@@ -1,8 +1,15 @@
 import numpy as np
 
-from alns_cvrptwpd.config.enums import NODE_DEMAND
+from alns_cvrptwpd.config.enums import (
+    NODE_DEMAND,
+    NODE_SERVICE,
+    NODE_TW_CLOSE,
+    NODE_TW_OPEN,
+    VEH_CAPACITY,
+    VEH_MAX_DUR,
+)
 from alns_cvrptwpd.data.generate_data import generate_data
-from alns_cvrptwpd.engine.state_update import refresh_route_loads
+from alns_cvrptwpd.engine.state_update import compute_route_states, refresh_route_loads
 from alns_cvrptwpd.operators.destroy.random_removal import random_removal
 from alns_cvrptwpd.preprocessing.initial_solution import build_initial
 
@@ -44,3 +51,46 @@ def test_refresh_route_loads_allocates_when_missing():
     loads = refresh_route_loads(data["routes"], data["lens"], data["node_f"])
     assert isinstance(loads, np.ndarray)
     np.testing.assert_array_equal(loads, np.zeros_like(loads))
+
+
+def test_compute_route_states_penalty_vectors():
+    dist = np.array(
+        [
+            [0.0, 1.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
+    node_f = np.zeros((3, 4), dtype=np.float64)
+    node_f[1, NODE_DEMAND] = 3.0
+    node_f[2, NODE_DEMAND] = 4.0
+    node_f[1, NODE_SERVICE] = 0.0
+    node_f[2, NODE_SERVICE] = 0.0
+    node_f[1, NODE_TW_OPEN] = 0.0
+    node_f[2, NODE_TW_OPEN] = 0.0
+    node_f[1, NODE_TW_CLOSE] = 0.5
+    node_f[2, NODE_TW_CLOSE] = 1.0
+
+    veh_f = np.zeros((1, 3), dtype=np.float64)
+    veh_f[0, VEH_CAPACITY] = 5.0
+    veh_f[0, VEH_MAX_DUR] = 2.5
+
+    routes = np.array([[1, 2]], dtype=np.int64)
+    lens = np.array([2], dtype=np.int64)
+
+    stats = compute_route_states(
+        routes,
+        lens,
+        dist,
+        node_f,
+        veh_f,
+    )
+
+    assert stats["route_overload"].shape == (1,)
+    assert stats["route_dur_excess"].shape == (1,)
+    assert stats["route_late"].shape == (1,)
+    np.testing.assert_allclose(stats["route_overload"], [2.0])
+    np.testing.assert_allclose(stats["route_dur_excess"], [0.5])
+    np.testing.assert_allclose(stats["route_late"], [1.5])
+    assert not stats["feasible"].all()
