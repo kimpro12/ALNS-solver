@@ -130,3 +130,50 @@ def compute_route_states(routes, lens, dist, node_f, veh_f, edge_vec=None, cost_
         "route_dist": route_dist,
         "route_cost": route_cost,
     }
+
+
+def refresh_route_loads(routes, lens, node_f, loads=None, changed=None):
+    """Recompute cumulative route loads after structural changes.
+
+    Parameters
+    ----------
+    routes : ndarray (m, L_max)
+        Route matrix storing customer indices per position.
+    lens : ndarray (m,)
+        Current route lengths.
+    node_f : ndarray (n, F_NODE_F)
+        Node feature matrix that includes demands.
+    loads : ndarray (m,), optional
+        Buffer to update in-place. When ``None`` a new array is allocated.
+    changed : ndarray (m,), optional
+        Boolean/int mask of routes whose structure changed. When omitted all
+        routes are recomputed.
+
+    Returns
+    -------
+    ndarray
+        Array of route loads corresponding to ``lens``.
+    """
+
+    demand = node_f[:, NODE_DEMAND]
+    m = routes.shape[0]
+
+    if loads is None:
+        loads = np.zeros(m, dtype=np.float64)
+
+    if changed is None:
+        idxs = np.arange(m, dtype=np.int64)
+    else:
+        idxs = np.nonzero(changed)[0]
+        if idxs.size == 0:
+            return loads
+
+    for r in idxs:
+        L = int(lens[r])
+        if L:
+            segment = routes[r, :L]
+            loads[r] = float(demand[segment].sum())
+        else:
+            loads[r] = 0.0
+
+    return loads

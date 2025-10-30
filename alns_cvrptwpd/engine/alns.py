@@ -1,6 +1,6 @@
 import numpy as np
 from .acceptance import accept_solution
-from .state_update import compute_route_states
+from .state_update import compute_route_states, refresh_route_loads
 from ..config.enums import F_LOAD
 from ..operators.destroy.random_removal import random_removal
 from ..operators.destroy.shaw_removal import shaw_removal
@@ -87,6 +87,15 @@ def run_alns(solution, data, params, metrics):
             removed, changed = shaw_removal(cand["routes"], cand["lens"], data["coords"], k_remove, rng)
         else:
             removed, changed = route_pair_destroy(cand["routes"], cand["lens"], max(1, k_remove//2), rng)
+
+        if changed.any():
+            refresh_route_loads(
+                cand["routes"],
+                cand["lens"],
+                data["node_f"],
+                loads=cand["loads"],
+                changed=changed,
+            )
 
         if len(removed) > 0:
             # Repair (greedy best insertion)
