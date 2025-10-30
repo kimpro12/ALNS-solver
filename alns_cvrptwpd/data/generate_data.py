@@ -20,6 +20,10 @@ def generate_data(n_customers=60, n_vehicles=6, L_max=40, seed=0):
     dist = _euclid(coords, coords).astype(np.float64, copy=False)
     ttime = dist.copy()  # unit speed; TW scaffolding only
 
+    # vectorized cost chunk (dim=1 for distance; extend as needed)
+    edge_vec = dist[..., None].copy()
+    cost_w = np.ones(edge_vec.shape[2], dtype=np.float64)
+
     # node features
     node_f = np.zeros((n, F_NODE_F), dtype=np.float64)
     node_i = np.zeros((n, F_NODE_I), dtype=np.int64)
@@ -42,6 +46,9 @@ def generate_data(n_customers=60, n_vehicles=6, L_max=40, seed=0):
 
     # vehicles
     veh_f = np.zeros((m, F_VEH_F), dtype=np.float64)
+    veh_i = np.zeros((m, 2), dtype=np.int64)
+    veh_i[:, 0] = 0  # start depot
+    veh_i[:, 1] = 0  # end depot
     # capacity roughly scales with total demand / m * 1.4
     avg_load = node_f[1:, NODE_DEMAND].sum() / m
     veh_f[:, VEH_CAPACITY] = max(15.0, 1.4 * avg_load)
@@ -60,9 +67,12 @@ def generate_data(n_customers=60, n_vehicles=6, L_max=40, seed=0):
         "coords": coords,
         "dist": dist,
         "ttime": ttime,
+        "edge_vec": edge_vec,
+        "cost_w": cost_w,
         "node_f": node_f,
         "node_i": node_i,
         "veh_f": veh_f,
+        "veh_i": veh_i,
         "routes": routes,
         "lens": lens,
         "loads": loads,
