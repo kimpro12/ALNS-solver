@@ -1,6 +1,7 @@
 import numpy as np
 
-def shaw_removal(routes, lens, coords, remove_k, rng):
+
+def shaw_removal(routes, lens, coords, remove_k, rng, weights=None):
     """Simple Shaw-like removal: pick a random seed, remove its nearest neighbors.
     Returns (removed_customers, changed_routes_mask)."""
     m, Lmax = routes.shape
@@ -15,7 +16,22 @@ def shaw_removal(routes, lens, coords, remove_k, rng):
     if not all_pos:
         return np.empty(0, dtype=np.int64), np.zeros(m, dtype=np.int64)
 
-    seed_r, seed_i, seed_c = all_pos[rng.integers(len(all_pos))]
+    if weights is not None:
+        probs = np.array(
+            [weights[int(c)] if int(c) < len(weights) else 0.0 for (_, _, c) in all_pos],
+            dtype=np.float64,
+        )
+        if probs.sum() <= 0:
+            probs = None
+    else:
+        probs = None
+
+    if probs is None:
+        seed_r, seed_i, seed_c = all_pos[rng.integers(len(all_pos))]
+    else:
+        probs /= probs.sum()
+        idx = int(rng.choice(len(all_pos), p=probs))
+        seed_r, seed_i, seed_c = all_pos[idx]
     # distances to seed
     dists = []
     sx, sy = coords[seed_c]
