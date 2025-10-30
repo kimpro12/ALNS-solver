@@ -1,11 +1,16 @@
 import numpy as np
 
-def route_pair_destroy(routes, lens, k_block, rng):
+
+def route_pair_destroy(routes, lens, k_block, rng, route_weights=None):
     """Pick two longest routes and remove a small contiguous block from each.
 
     Returns (removed_customers, changed_routes_mask)."""
     m, Lmax = routes.shape
-    order = np.argsort(lens)[::-1]
+    if route_weights is not None:
+        weights = route_weights.copy()
+        order = np.argsort(weights)[::-1]
+    else:
+        order = np.argsort(lens)[::-1]
     removed = []
     changed = np.zeros(m, dtype=np.int64)
 
