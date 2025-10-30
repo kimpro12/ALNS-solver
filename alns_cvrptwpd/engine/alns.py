@@ -2,10 +2,17 @@ import numpy as np
 from .acceptance import accept_solution
 from .state_update import compute_route_states, refresh_route_loads
 from ..config.enums import F_LOAD
-from ..operators.destroy.random_removal import random_removal
-from ..operators.destroy.shaw_removal import shaw_removal
-from ..operators.destroy.route_pair_destroy import route_pair_destroy
-from ..operators.repair.greedy_insertion import greedy_insertion
+from ..operators.destroy import (
+    random_removal,
+    route_pair_destroy,
+    shaw_removal,
+    worst_removal,
+)
+from ..operators.repair import (
+    best_insertion,
+    random_top_k_insertion,
+    regret_insertion,
+)
 from ..local_search.apply_local_search import apply_local_search
 
 
@@ -100,6 +107,10 @@ def run_alns(solution, data, params, metrics):
     iters = int(params.get("iters", 3000))
     log_period = int(params.get("log_period", 500))
     k_remove = int(params.get("destroy_remove_k", 10))
+    route_pair_k = int(params.get("destroy_route_pair_k", max(1, k_remove // 2)))
+    worst_k = int(params.get("destroy_worst_k", k_remove))
+    repair_top_k = int(params.get("repair_top_k", 3))
+    regret_k = int(params.get("regret_k", 3))
     ls_budget = int(params.get("ls_budget_per_iter", 50))
     ls_heavy_period = int(params.get("ls_heavy_period", 0))
     ls_heavy_budget = int(params.get("ls_heavy_budget", max(ls_budget, 1)))
@@ -109,8 +120,8 @@ def run_alns(solution, data, params, metrics):
     reward_curr = float(params.get("adapt_reward_curr", 1.0))
     reward_reject = float(params.get("adapt_reward_reject", 0.1))
 
-    D_ops = ["random", "shaw", "route_pair"]
-    R_ops = ["greedy"]  # extend later
+    D_ops = ["random", "shaw", "route_pair", "worst"]
+    R_ops = ["best", "random_top_k", "regret"]
     Wd = np.ones(len(D_ops), dtype=np.float64)
     Wr = np.ones(len(R_ops), dtype=np.float64)
 
@@ -124,9 +135,32 @@ def run_alns(solution, data, params, metrics):
         if D_ops[d_idx] == "random":
             removed, changed = random_removal(cand["routes"], cand["lens"], k_remove, rng)
         elif D_ops[d_idx] == "shaw":
-            removed, changed = shaw_removal(cand["routes"], cand["lens"], data["coords"], k_remove, rng)
+            removed, changed = shaw_removal(
+                cand["routes"], cand["lens"], data["coords"], k_remove, rng
+            )
+        elif D_ops[d_idx] == "route_pair":
+            removed, changed = route_pair_destroy(
+                cand["routes"], cand["lens"], max(1, route_pair_k), rng
+            )
         else:
-            removed, changed = route_pair_destroy(cand["routes"], cand["lens"], max(1, k_remove//2), rng)
+            removed, changed = worst_removal(
+                cand["routes"],
+                cand["lens"],
+                data["dist"],
+                max(1, worst_k),
+                rng,
+                edge_vec=data.get("edge_vec"),
+                cost_w=data.get("cost_w"),
+            )
+
+        if changed.any():
+            refresh_route_loads(
+                cand["routes"],
+                cand["lens"],
+                data["node_f"],
+                loads=cand["loads"],
+                changed=changed,
+            )
 
         if changed.any():
             refresh_route_loads(
@@ -139,11 +173,73 @@ def run_alns(solution, data, params, metrics):
 
         if len(removed) > 0:
             # Repair (greedy best insertion)
-            unrouted = np.concatenate([cand["unrouted"], removed]) if cand["unrouted"].size else removed.copy()
-            inserted = greedy_insertion(unrouted, cand["routes"], cand["lens"], cand["loads"],
-                                        data["node_f"], data["veh_f"], data["dist"], tail_only=False)
-            # any left remain unrouted
-            cand["unrouted"] = unrouted[inserted:] if inserted < len(unrouted) else np.empty(0, dtype=np.int64)
+            unrouted = (
+                np.concatenate([cand["unrouted"], removed])
+                if cand["unrouted"].size
+                else removed.copy()
+            )
+        else:
+            unrouted = cand["unrouted"].copy()
+
+        if unrouted.size > 0:
+            if R_ops[r_idx] == "best":
+                inserted, used_mask, repair_changed = best_insertion(
+                    unrouted,
+                    cand["routes"],
+                    cand["lens"],
+                    cand["loads"],
+                    data["node_f"],
+                    data.get("node_i"),
+                    data["veh_f"],
+                    data["dist"],
+                    edge_vec=data.get("edge_vec"),
+                    cost_w=data.get("cost_w"),
+                )
+            elif R_ops[r_idx] == "random_top_k":
+                inserted, used_mask, repair_changed = random_top_k_insertion(
+                    unrouted,
+                    cand["routes"],
+                    cand["lens"],
+                    cand["loads"],
+                    data["node_f"],
+                    data.get("node_i"),
+                    data["veh_f"],
+                    data["dist"],
+                    edge_vec=data.get("edge_vec"),
+                    cost_w=data.get("cost_w"),
+                    top_k=max(1, repair_top_k),
+                    rng=rng,
+                )
+            else:
+                inserted, used_mask, repair_changed = regret_insertion(
+                    unrouted,
+                    cand["routes"],
+                    cand["lens"],
+                    cand["loads"],
+                    data["node_f"],
+                    data.get("node_i"),
+                    data["veh_f"],
+                    data["dist"],
+                    edge_vec=data.get("edge_vec"),
+                    cost_w=data.get("cost_w"),
+                    k=max(2, regret_k),
+                    rng=rng,
+                )
+
+            if inserted > 0:
+                cand["unrouted"] = unrouted[~used_mask]
+                if repair_changed.any():
+                    refresh_route_loads(
+                        cand["routes"],
+                        cand["lens"],
+                        data["node_f"],
+                        loads=cand["loads"],
+                        changed=repair_changed,
+                    )
+            else:
+                cand["unrouted"] = unrouted
+        else:
+            cand["unrouted"] = unrouted
 
         # Light LS (2-opt first-improvement)
         if ls_heavy_period > 0 and (it % ls_heavy_period) == 0:

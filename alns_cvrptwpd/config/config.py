@@ -9,7 +9,10 @@ DEFAULTS = {
     "ls_heavy_period": 1000,    # not used in the tiny demo but left for extension
     "ls_heavy_budget": 200,
     "destroy_remove_k": 10,     # customers removed by destroy
-    "regret_k": 3,              # for regret insertion (stub)
+    "destroy_route_pair_k": 2,  # block size for route pair destroy
+    "destroy_worst_k": 5,       # number of removals for worst removal
+    "repair_top_k": 3,          # candidates considered by random top-k
+    "regret_k": 3,              # for regret insertion
     "adapt_rho": 0.2,
     "adapt_reward_best": 6.0,
     "adapt_reward_accept": 3.0,
