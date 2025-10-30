@@ -1,6 +1,7 @@
 import numpy as np
 from .acceptance import accept_solution
 from .state_update import compute_route_states, refresh_route_loads
+from .sfr import SpatialFocus
 from ..config.enums import F_LOAD
 from ..operators.destroy import (
     random_removal,
@@ -27,6 +28,34 @@ def _update_operator_weight(weights, idx, rho, reward):
     weights[idx] = (1.0 - rho) * weights[idx] + rho * reward
     if weights[idx] <= 0.0:
         weights[idx] = 1e-6
+
+
+def _blend_weights(weights, focus):
+    if weights is None:
+        return None
+    weights = np.asarray(weights, dtype=np.float64)
+    if weights.size == 0:
+        return None
+    focus = float(np.clip(focus, 0.0, 1.0))
+    if focus >= 1.0:
+        total = float(weights.sum())
+        if total <= 0:
+            return None
+        return weights / total
+    if focus <= 0.0:
+        uniform = np.full(weights.shape, 1.0 / weights.size, dtype=np.float64)
+        return uniform
+    total = float(weights.sum())
+    if total <= 0:
+        base = np.full(weights.shape, 1.0 / weights.size, dtype=np.float64)
+        return base
+    base = weights / total
+    uniform = np.full(weights.shape, 1.0 / weights.size, dtype=np.float64)
+    blend = focus * base + (1.0 - focus) * uniform
+    blend_sum = float(blend.sum())
+    if blend_sum <= 0:
+        return uniform
+    return blend / blend_sum
 
 
 def _initial_temperature(dist, temp0):
@@ -120,6 +149,22 @@ def run_alns(solution, data, params, metrics):
     reward_curr = float(params.get("adapt_reward_curr", 1.0))
     reward_reject = float(params.get("adapt_reward_reject", 0.1))
 
+    sfr = None
+    sfr_destroy_focus = float(params.get("sfr_destroy_focus", 1.0))
+    sfr_repair_focus = float(params.get("sfr_repair_focus", 1.0))
+    sfr_ls_focus = float(params.get("sfr_ls_focus", 1.0))
+    if params.get("sfr_enabled", False) and "coords" in data:
+        sfr = SpatialFocus(
+            data["coords"],
+            alpha0=float(params.get("sfr_alpha0", 25.0)),
+            alpha_min=float(params.get("sfr_alpha_min", 5.0)),
+            gamma=float(params.get("sfr_gamma", 1.0)),
+            beta=float(params.get("sfr_beta", 0.2)),
+            destroy_bias=float(params.get("sfr_destroy_bias", 1.0)),
+            ls_bias=float(params.get("sfr_ls_bias", 1.0)),
+        )
+        sfr.update(curr["routes"], curr["lens"], iteration=0, total_iters=iters)
+
     D_ops = ["random", "shaw", "route_pair", "worst"]
     R_ops = ["best", "random_top_k", "regret"]
     Wd = np.ones(len(D_ops), dtype=np.float64)
@@ -131,16 +176,30 @@ def run_alns(solution, data, params, metrics):
         r_idx = int(rng.choice(len(R_ops), p=_normalise_weights(Wr)))
 
         cand = _clone_solution(curr)
+        destroy_weights = _blend_weights(sfr.customer_weights, sfr_destroy_focus) if sfr else None
+        route_focus = sfr.route_weights(curr["routes"], curr["lens"]) if sfr else None
+        route_destroy_weights = _blend_weights(route_focus, sfr_destroy_focus)
         # Destroy
         if D_ops[d_idx] == "random":
-            removed, changed = random_removal(cand["routes"], cand["lens"], k_remove, rng)
+            removed, changed = random_removal(
+                cand["routes"], cand["lens"], k_remove, rng, weights=destroy_weights
+            )
         elif D_ops[d_idx] == "shaw":
             removed, changed = shaw_removal(
-                cand["routes"], cand["lens"], data["coords"], k_remove, rng
+                cand["routes"],
+                cand["lens"],
+                data["coords"],
+                k_remove,
+                rng,
+                weights=destroy_weights,
             )
         elif D_ops[d_idx] == "route_pair":
             removed, changed = route_pair_destroy(
-                cand["routes"], cand["lens"], max(1, route_pair_k), rng
+                cand["routes"],
+                cand["lens"],
+                max(1, route_pair_k),
+                rng,
+                route_weights=route_destroy_weights,
             )
         else:
             removed, changed = worst_removal(
@@ -151,15 +210,8 @@ def run_alns(solution, data, params, metrics):
                 rng,
                 edge_vec=data.get("edge_vec"),
                 cost_w=data.get("cost_w"),
-            )
-
-        if changed.any():
-            refresh_route_loads(
-                cand["routes"],
-                cand["lens"],
-                data["node_f"],
-                loads=cand["loads"],
-                changed=changed,
+                weights=destroy_weights,
+                focus=sfr_destroy_focus,
             )
 
         if changed.any():
@@ -182,6 +234,7 @@ def run_alns(solution, data, params, metrics):
             unrouted = cand["unrouted"].copy()
 
         if unrouted.size > 0:
+            repair_weights = _blend_weights(sfr.customer_weights, sfr_repair_focus) if sfr else None
             if R_ops[r_idx] == "best":
                 inserted, used_mask, repair_changed = best_insertion(
                     unrouted,
@@ -209,6 +262,8 @@ def run_alns(solution, data, params, metrics):
                     cost_w=data.get("cost_w"),
                     top_k=max(1, repair_top_k),
                     rng=rng,
+                    weights=repair_weights,
+                    focus=sfr_repair_focus,
                 )
             else:
                 inserted, used_mask, repair_changed = regret_insertion(
@@ -241,11 +296,46 @@ def run_alns(solution, data, params, metrics):
         else:
             cand["unrouted"] = unrouted
 
-        # Light LS (2-opt first-improvement)
+        ls_route_weights = None
+        if sfr is not None:
+            ls_raw = sfr.route_weights(cand["routes"], cand["lens"])
+            if ls_raw is not None:
+                ls_scaled = np.array([sfr.ls_route_weight(v) for v in ls_raw], dtype=np.float64)
+                total_ls = ls_scaled.sum()
+                if total_ls > 0:
+                    ls_scaled /= total_ls
+                    ls_route_weights = _blend_weights(ls_scaled, sfr_ls_focus)
+
         if ls_heavy_period > 0 and (it % ls_heavy_period) == 0:
-            apply_local_search(cand["routes"], cand["lens"], data["dist"], budget=ls_heavy_budget)
+            apply_local_search(
+                cand["routes"],
+                cand["lens"],
+                data["dist"],
+                data["node_f"],
+                data.get("node_i"),
+                data["veh_f"],
+                edge_vec=data.get("edge_vec"),
+                cost_w=data.get("cost_w"),
+                budget=ls_heavy_budget,
+                heavy=True,
+                rng=rng,
+                route_weights=ls_route_weights,
+            )
         else:
-            apply_local_search(cand["routes"], cand["lens"], data["dist"], budget=ls_budget)
+            apply_local_search(
+                cand["routes"],
+                cand["lens"],
+                data["dist"],
+                data["node_f"],
+                data.get("node_i"),
+                data["veh_f"],
+                edge_vec=data.get("edge_vec"),
+                cost_w=data.get("cost_w"),
+                budget=ls_budget,
+                heavy=False,
+                rng=rng,
+                route_weights=ls_route_weights,
+            )
 
         new_cost = _evaluate(cand, data)
         prev_cost = curr_cost
@@ -291,5 +381,8 @@ def run_alns(solution, data, params, metrics):
                 r_op=R_ops[r_idx],
                 status=status,
             )
+
+        if sfr is not None:
+            sfr.update(curr["routes"], curr["lens"], it, iters)
 
     return best

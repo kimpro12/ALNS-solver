@@ -10,6 +10,7 @@ from alns_cvrptwpd.config.enums import (
     NODE_TW_OPEN,
     VEH_CAPACITY,
 )
+from alns_cvrptwpd.operators.destroy.random_removal import random_removal
 from alns_cvrptwpd.operators.destroy.worst_removal import worst_removal
 from alns_cvrptwpd.operators.repair import (
     best_insertion,
@@ -228,3 +229,15 @@ def test_regret_insertion_prefers_high_regret_customer():
     veh_caps = vehicle_capacities(veh_f)
     moves_c2 = _compute_moves_for_customer(2, routes, lens, node_f, node_i, veh_caps, dist)
     assert moves_c2 == []  # route is full; remaining customer stays unrouted.
+
+
+def test_random_removal_uses_weights():
+    routes = np.array([[1, 2, 3, 0]], dtype=np.int64)
+    lens = np.array([3], dtype=np.int64)
+    rng = np.random.default_rng(123)
+    weights = np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float64)
+
+    removed, changed = random_removal(routes, lens, 1, rng, weights=weights)
+
+    assert removed.tolist() == [1]
+    assert changed.tolist() == [1]

@@ -17,6 +17,8 @@ def random_top_k_insertion(
     cost_w=None,
     top_k=3,
     rng=None,
+    weights=None,
+    focus=1.0,
 ):
     """Insert customers by sampling among the top-k lowest Δcost moves."""
 
@@ -51,7 +53,26 @@ def random_top_k_insertion(
             break
         candidates.sort(key=lambda x: (x[0][0], x[0][1]))
         limit = min(top_k, len(candidates))
-        choice = int(rng.integers(limit))
+
+        if weights is not None and focus > 0:
+            raw = np.array(
+                [
+                    1.0
+                    + focus
+                    * (weights[int(c[2])] if int(c[2]) < len(weights) else 0.0)
+                    for c in candidates[:limit]
+                ],
+                dtype=np.float64,
+            )
+            total = raw.sum()
+            if total > 0:
+                probs = raw / total
+                choice = int(rng.choice(limit, p=probs))
+            else:
+                choice = int(rng.integers(limit))
+        else:
+            choice = int(rng.integers(limit))
+
         move, idx, customer = candidates[choice]
         delta_cost, delta_dist, route_idx, pos = move
         if apply_move(routes, lens, loads, node_f, route_idx, pos, customer):

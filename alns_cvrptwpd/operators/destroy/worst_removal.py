@@ -7,7 +7,17 @@ def _edge_cost(dist, edge_vec, cost_w, a, b):
     return float(dist[a, b])
 
 
-def worst_removal(routes, lens, dist, remove_k, rng, edge_vec=None, cost_w=None):
+def worst_removal(
+    routes,
+    lens,
+    dist,
+    remove_k,
+    rng,
+    edge_vec=None,
+    cost_w=None,
+    weights=None,
+    focus=1.0,
+):
     """Remove customers that contribute the largest marginal travel cost.
 
     Parameters
@@ -69,10 +79,15 @@ def worst_removal(routes, lens, dist, remove_k, rng, edge_vec=None, cost_w=None)
                     + _edge_cost(dist, edge_vec, cost_w, v, nxt)
                     - _edge_cost(dist, edge_vec, cost_w, prev, nxt)
                 )
+                if weights is not None:
+                    bias = 1.0 + focus * weights[int(v)] if int(v) < len(weights) else 1.0
+                else:
+                    bias = 1.0
                 # store with small random noise for stochastic tie-breaks
                 noise = rng.random() * 1e-9 if rng is not None else 0.0
-                if best is None or delta + noise > best:
-                    best = delta + noise
+                score = (delta * bias) + noise
+                if best is None or score > best:
+                    best = score
                     best_entry = (r, i, v)
                 prev = v
 
