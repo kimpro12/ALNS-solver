@@ -8,7 +8,7 @@ from .penalty import (
     update_penalty_state,
 )
 from .sfr import SpatialFocus
-from ..config.enums import F_LOAD, F_PEN, P_CAP, P_DUR, P_TW, P_UNS
+from ..config.enums import DIM_MODE_ADD, F_LOAD, F_PEN, P_CAP, P_DUR, P_TW, P_UNS
 from ..operators.destroy import (
     random_removal,
     route_pair_destroy,
@@ -124,6 +124,7 @@ def _evaluate(sol, data, penalty_state):
         data["veh_f"],
         edge_vec=data.get("edge_vec"),
         cost_w=data.get("cost_w"),
+        dim_mode=data.get("dim_mode", DIM_MODE_ADD),
     )
     sol["total_dist"] = stats["total_dist"]
     sol["total_cost"] = stats["total_cost"]
@@ -271,6 +272,8 @@ def run_alns(solution, data, params, metrics):
             unrouted = cand["unrouted"].copy()
 
         if unrouted.size > 0:
+            if sfr is not None:
+                unrouted = sfr.repair_order(unrouted, data["dist"])
             repair_weights = _blend_weights(sfr.customer_weights, sfr_repair_focus) if sfr else None
             if R_ops[r_idx] == "best":
                 inserted, used_mask, repair_changed = best_insertion(

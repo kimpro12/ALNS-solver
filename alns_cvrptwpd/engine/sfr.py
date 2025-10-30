@@ -7,6 +7,8 @@ from typing import Optional
 
 import numpy as np
 
+from .dimension import repair_giant_tour_focus_njit, spatial_penalty
+
 
 @dataclass
 class SpatialFocus:
@@ -95,3 +97,15 @@ class SpatialFocus:
 
     def ls_route_weight(self, value: float) -> float:
         return (1.0 - self.ls_bias) + self.ls_bias * value
+
+    def penalty(self, customer: int, alpha: Optional[float] = None) -> float:
+        if customer <= 0 or customer >= self.coords.shape[0]:
+            return 0.0
+        alpha_val = self.alpha if alpha is None else float(alpha)
+        return spatial_penalty(self.coords, customer, self.centroid, alpha_val)
+
+    def repair_order(self, unrouted: np.ndarray, dist: np.ndarray) -> np.ndarray:
+        if unrouted.size <= 1:
+            return unrouted.copy()
+        order = repair_giant_tour_focus_njit(dist, unrouted.astype(np.int64), self.coords, self.centroid, self.alpha)
+        return order

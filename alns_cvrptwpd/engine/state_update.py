@@ -6,6 +6,7 @@ from ..config.enums import (
     F_LOAD,
     F_VEC0,
     F_TIME_F,
+    DIM_MODE_ADD,
     NODE_DEMAND,
     NODE_SERVICE,
     NODE_TW_CLOSE,
@@ -19,6 +20,7 @@ from ..config.enums import (
     VEH_CAPACITY,
     VEH_MAX_DUR,
 )
+from .dimension import apply_dimension_behavior, cost_vehicle
 
 
 def _ensure_vector_inputs(edge_vec, cost_w):
@@ -34,7 +36,16 @@ def _ensure_vector_inputs(edge_vec, cost_w):
     return edge_vec, cost_w, vec_dim
 
 
-def compute_route_states(routes, lens, dist, node_f, veh_f, edge_vec=None, cost_w=None):
+def compute_route_states(
+    routes,
+    lens,
+    dist,
+    node_f,
+    veh_f,
+    edge_vec=None,
+    cost_w=None,
+    dim_mode=DIM_MODE_ADD,
+):
     """Compute per-route prefix states, cost aggregates and feasibility flags."""
 
     edge_vec, cost_w, vec_dim = _ensure_vector_inputs(edge_vec, cost_w)
@@ -88,9 +99,11 @@ def compute_route_states(routes, lens, dist, node_f, veh_f, edge_vec=None, cost_
 
             if vec_dim:
                 step_vec = edge_vec[prev, v]
-                vec_acc = vec_acc + step_vec
+                for f in range(vec_dim):
+                    prev_val = vec_acc[f]
+                    vec_acc[f] = apply_dimension_behavior(prev_val, 0.0, step_vec[f], dim_mode)
                 core_f[r, i, F_VEC0 : F_VEC0 + vec_dim] = vec_acc
-                cost_acc += float(np.dot(step_vec, cost_w))
+                cost_acc += float(cost_vehicle(step_vec, cost_w))
             else:
                 cost_acc += leg_dist
             core_f[r, i, F_COST] = cost_acc
@@ -121,8 +134,9 @@ def compute_route_states(routes, lens, dist, node_f, veh_f, edge_vec=None, cost_
             dist_acc += leg_dist
             if vec_dim:
                 step_vec = edge_vec[prev, 0]
-                vec_acc = vec_acc + step_vec
-                cost_acc += float(np.dot(step_vec, cost_w))
+                for f in range(vec_dim):
+                    vec_acc[f] = apply_dimension_behavior(vec_acc[f], 0.0, step_vec[f], dim_mode)
+                cost_acc += float(cost_vehicle(step_vec, cost_w))
             else:
                 cost_acc += leg_dist
             route_duration[r] = leave_time + leg_dist

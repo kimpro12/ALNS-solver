@@ -25,6 +25,11 @@ F_DIST = 1
 F_COST = 2
 F_VEC0 = 3  # start index for vector dims (not used in this minimal demo)
 
+# dimension behaviour modes
+DIM_MODE_ADD = 0
+DIM_MODE_MAX = 1
+DIM_MODE_FUNC = 2
+
 # time state floats
 T_ARR   = 0
 T_START = 1
