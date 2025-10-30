@@ -162,6 +162,15 @@ def run_alns(solution, data, params, metrics):
                 changed=changed,
             )
 
+        if changed.any():
+            refresh_route_loads(
+                cand["routes"],
+                cand["lens"],
+                data["node_f"],
+                loads=cand["loads"],
+                changed=changed,
+            )
+
         if len(removed) > 0:
             # Repair (greedy best insertion)
             unrouted = (
