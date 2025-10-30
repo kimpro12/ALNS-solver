@@ -1,0 +1,49 @@
+import argparse, os, json, numpy as np
+from alns_cvrptwpd.config.config import DEFAULTS
+from alns_cvrptwpd.data.generate_data import generate_data
+from alns_cvrptwpd.preprocessing.initial_solution import build_initial
+from alns_cvrptwpd.engine.alns import run_alns
+from alns_cvrptwpd.logging.metrics import Metrics, save_metrics_json, save_routes_csv
+
+def parse_args():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--n_customers", type=int, default=60)
+    ap.add_argument("--n_vehicles", type=int, default=6)
+    ap.add_argument("--iters", type=int, default=3000)
+    ap.add_argument("--lmax", type=int, default=40)
+    ap.add_argument("--outdir", type=str, default="out")
+    return ap.parse_args()
+
+def main():
+    args = parse_args()
+    np.random.seed(args.seed)
+
+    # 1) Data
+    data = generate_data(n_customers=args.n_customers, n_vehicles=args.n_vehicles, L_max=args.lmax, seed=args.seed)
+
+    # 2) Initial solution (trivial + greedy tail)
+    solution = build_initial(data)
+
+    # 3) Run ALNS
+    params = DEFAULTS.copy()
+    params["iters"] = int(args.iters)
+    os.makedirs(args.outdir, exist_ok=True)
+    metrics = Metrics()
+    best = run_alns(solution, data, params, metrics)
+
+    # 4) Save artifacts
+    save_metrics_json(os.path.join(args.outdir, "metrics.json"), metrics, best, params)
+    save_routes_csv(os.path.join(args.outdir, "routes.csv"), best["routes"], best["lens"])
+    metrics.save_csv(os.path.join(args.outdir, "log.csv"))
+
+    # 5) Print summary
+    used = int((best["lens"] > 0).sum())
+    print("\\n[DONE]")
+    print(f"  Best cost       : {best['best_cost']:.4f}")
+    print(f"  Total distance  : {best['total_dist']:.4f}")
+    print(f"  Vehicles used   : {used}/{data['m']}")
+    print(f"  Unserved count  : {len(best['unrouted'])}")
+
+if __name__ == "__main__":
+    main()
