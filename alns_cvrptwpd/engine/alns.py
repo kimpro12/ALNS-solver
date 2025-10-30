@@ -1,6 +1,7 @@
 import numpy as np
 from .acceptance import accept_solution
-from .state_update import total_distance
+from .state_update import compute_route_states
+from ..config.enums import F_LOAD
 from ..operators.destroy.random_removal import random_removal
 from ..operators.destroy.shaw_removal import shaw_removal
 from ..operators.destroy.route_pair_destroy import route_pair_destroy
@@ -8,19 +9,51 @@ from ..operators.repair.greedy_insertion import greedy_insertion
 from ..local_search.apply_local_search import apply_local_search
 
 def _clone_solution(sol):
-    return {
+    clone = {
         "routes": sol["routes"].copy(),
         "lens": sol["lens"].copy(),
         "loads": sol["loads"].copy(),
         "unrouted": sol["unrouted"].copy(),
         "best_cost": sol.get("best_cost", np.inf),
         "total_dist": sol.get("total_dist", 0.0),
+        "total_cost": sol.get("total_cost", 0.0),
     }
+    if "core_f" in sol:
+        clone["core_f"] = sol["core_f"].copy()
+    if "time_f" in sol:
+        clone["time_f"] = sol["time_f"].copy()
+    if "route_dist" in sol:
+        clone["route_dist"] = sol["route_dist"].copy()
+    if "route_cost" in sol:
+        clone["route_cost"] = sol["route_cost"].copy()
+    clone["feasible"] = sol.get(
+        "feasible", np.ones(sol["routes"].shape[0], dtype=bool)
+    ).copy()
+    return clone
 
 def _evaluate(sol, data):
-    dist = total_distance(data["dist"], sol["routes"], sol["lens"])
-    sol["total_dist"] = dist
-    return dist
+    stats = compute_route_states(
+        sol["routes"],
+        sol["lens"],
+        data["dist"],
+        data["node_f"],
+        data["veh_f"],
+        edge_vec=data.get("edge_vec"),
+        cost_w=data.get("cost_w"),
+    )
+    sol["total_dist"] = stats["total_dist"]
+    sol["total_cost"] = stats["total_cost"]
+    sol["core_f"] = stats["core_f"]
+    sol["time_f"] = stats["time_f"]
+    sol["feasible"] = stats["feasible"]
+    sol["route_dist"] = stats["route_dist"]
+    sol["route_cost"] = stats["route_cost"]
+
+    for r in range(sol["routes"].shape[0]):
+        L = int(sol["lens"][r])
+        sol["loads"][r] = stats["core_f"][r, L, F_LOAD] if L > 0 else 0.0
+
+    return stats["total_cost"]
 
 def run_alns(solution, data, params, metrics):
     rng = np.random.default_rng()
