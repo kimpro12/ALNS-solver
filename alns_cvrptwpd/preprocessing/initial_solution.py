@@ -24,4 +24,5 @@ def build_initial(data):
         "unrouted": unrouted,
         "best_cost": np.inf,
         "total_dist": 0.0,
+        "total_cost": 0.0,
     }
