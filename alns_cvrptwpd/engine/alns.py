@@ -8,6 +8,38 @@ from ..operators.destroy.route_pair_destroy import route_pair_destroy
 from ..operators.repair.greedy_insertion import greedy_insertion
 from ..local_search.apply_local_search import apply_local_search
 
+
+def _normalise_weights(weights):
+    total = float(weights.sum())
+    if total <= 0:
+        return np.full_like(weights, 1.0 / len(weights), dtype=np.float64)
+    return weights / total
+
+
+def _update_operator_weight(weights, idx, rho, reward):
+    weights[idx] = (1.0 - rho) * weights[idx] + rho * reward
+    if weights[idx] <= 0.0:
+        weights[idx] = 1e-6
+
+
+def _initial_temperature(dist, temp0):
+    if temp0 is not None:
+        try:
+            val = float(temp0)
+        except (TypeError, ValueError):
+            val = None
+        else:
+            if val > 0.0:
+                return val
+    if dist.size == 0:
+        return 1.0
+    tri_idx = np.triu_indices(dist.shape[0], k=1)
+    candidates = dist[tri_idx]
+    candidates = candidates[candidates > 0]
+    if candidates.size == 0:
+        return 1.0
+    return float(np.median(candidates))
+
 def _clone_solution(sol):
     clone = {
         "routes": sol["routes"].copy(),
@@ -62,22 +94,30 @@ def run_alns(solution, data, params, metrics):
     best = _clone_solution(curr)
     best["best_cost"] = curr_cost
 
-    temp = float(params.get("sa_temp0", 100.0))
+    temp = _initial_temperature(data["dist"], params.get("sa_temp0"))
     cooling = float(params.get("sa_cooling", 0.995))
+    temp_min = float(params.get("sa_temp_min", 1e-6))
     iters = int(params.get("iters", 3000))
     log_period = int(params.get("log_period", 500))
     k_remove = int(params.get("destroy_remove_k", 10))
     ls_budget = int(params.get("ls_budget_per_iter", 50))
+    ls_heavy_period = int(params.get("ls_heavy_period", 0))
+    ls_heavy_budget = int(params.get("ls_heavy_budget", max(ls_budget, 1)))
+    rho = float(params.get("adapt_rho", 0.2))
+    reward_best = float(params.get("adapt_reward_best", 6.0))
+    reward_accept = float(params.get("adapt_reward_accept", 3.0))
+    reward_curr = float(params.get("adapt_reward_curr", 1.0))
+    reward_reject = float(params.get("adapt_reward_reject", 0.1))
 
     D_ops = ["random", "shaw", "route_pair"]
     R_ops = ["greedy"]  # extend later
     Wd = np.ones(len(D_ops), dtype=np.float64)
     Wr = np.ones(len(R_ops), dtype=np.float64)
 
-    for it in range(1, iters+1):
+    for it in range(1, iters + 1):
         # Sample ops
-        d_idx = int(rng.choice(len(D_ops), p=Wd / Wd.sum()))
-        r_idx = int(rng.choice(len(R_ops), p=Wr / Wr.sum()))
+        d_idx = int(rng.choice(len(D_ops), p=_normalise_weights(Wd)))
+        r_idx = int(rng.choice(len(R_ops), p=_normalise_weights(Wr)))
 
         cand = _clone_solution(curr)
         # Destroy
@@ -106,22 +146,54 @@ def run_alns(solution, data, params, metrics):
             cand["unrouted"] = unrouted[inserted:] if inserted < len(unrouted) else np.empty(0, dtype=np.int64)
 
         # Light LS (2-opt first-improvement)
-        apply_local_search(cand["routes"], cand["lens"], data["dist"], budget=ls_budget)
+        if ls_heavy_period > 0 and (it % ls_heavy_period) == 0:
+            apply_local_search(cand["routes"], cand["lens"], data["dist"], budget=ls_heavy_budget)
+        else:
+            apply_local_search(cand["routes"], cand["lens"], data["dist"], budget=ls_budget)
 
         new_cost = _evaluate(cand, data)
-        accepted = accept_solution(curr_cost, new_cost, temp, rng)
+        prev_cost = curr_cost
+        accepted = accept_solution(prev_cost, new_cost, temp, rng)
+        status = "REJECT"
 
         if accepted:
             curr, curr_cost = cand, new_cost
             if new_cost < best["best_cost"]:
                 best = _clone_solution(curr)
                 best["best_cost"] = new_cost
+                status = "BEST"
+            elif new_cost < prev_cost:
+                status = "IMPROVE"
+            else:
+                status = "ACCEPT"
+        else:
+            status = "REJECT"
+
+        if status == "BEST":
+            reward = reward_best
+        elif status == "IMPROVE":
+            reward = reward_accept
+        elif status == "ACCEPT":
+            reward = reward_curr
+        else:
+            reward = reward_reject
+
+        _update_operator_weight(Wd, d_idx, rho, reward)
+        _update_operator_weight(Wr, r_idx, rho, reward)
 
         # cooling
-        temp *= cooling
+        temp = max(temp_min, temp * cooling)
 
         # logging
         if (it % log_period) == 0 or it == 1:
-            metrics.append(it, curr_cost, best["best_cost"], temp, d_op=D_ops[d_idx], r_op=R_ops[r_idx])
+            metrics.append(
+                it,
+                curr_cost,
+                best["best_cost"],
+                temp,
+                d_op=D_ops[d_idx],
+                r_op=R_ops[r_idx],
+                status=status,
+            )
 
     return best

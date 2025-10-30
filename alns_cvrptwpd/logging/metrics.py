@@ -2,15 +2,15 @@ import csv, json
 
 class Metrics:
     def __init__(self):
-        self.rows = []  # (iter, curr, best, temp, d_op, r_op)
+        self.rows = []  # (iter, curr, best, temp, d_op, r_op, status)
 
-    def append(self, it, curr, best, temp, d_op="-", r_op="-"):
-        self.rows.append((it, float(curr), float(best), float(temp), d_op, r_op))
+    def append(self, it, curr, best, temp, d_op="-", r_op="-", status=""):
+        self.rows.append((it, float(curr), float(best), float(temp), d_op, r_op, status))
 
     def save_csv(self, path):
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["iter", "curr_cost", "best_cost", "temp", "destroy_op", "repair_op"])
+            w.writerow(["iter", "curr_cost", "best_cost", "temp", "destroy_op", "repair_op", "status"])
             for row in self.rows:
                 w.writerow(row)
 
