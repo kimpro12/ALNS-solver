@@ -1,0 +1,8 @@
+seed: 0
+params:
+  iters: 500
+  log_period: 50
+L_max: 16
+dataset:
+  nodes: toy_dataset/nodes.csv
+  vehicles: toy_dataset/vehicles.csv

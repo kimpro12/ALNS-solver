@@ -17,14 +17,27 @@ Core code avoids OOP; glue/config may use Python conveniences. Designed to match
 ```bash
 python -m venv .venv && . .venv/bin/activate  # (Windows: .venv\Scripts\activate)
 pip install -r requirements.txt
-python main.py --seed 0 --n_customers 80 --n_vehicles 6 --iters 5000
+
+# Run the solver on the bundled toy dataset (outputs are written to out/toy_run)
+python main.py \
+  --config examples/toy_config.yaml \
+  --outdir out/toy_run \
+  --seed 0 \
+  --trace
 ```
 
-You’ll see a progress print every 500 iters and a final summary.
-Artifacts:
-- `out/metrics.json` — best/current cost & stats
-- `out/routes.csv` — best solution routes
-- `out/log.csv`     — iteration logs (subsampled)
+You will receive a JSON summary plus three artifact files in the output directory:
+
+- `metrics.json` – best/current cost & parameters used for the run
+- `routes.csv` – best solution routes (vehicle x stop indices)
+- `metrics_log.csv` – iteration log sampled every `log_period`
+- `trace.npz` – optional lightweight arrays (iterations, costs, temperature)
+
+> The configuration file references the sample CSV dataset stored under
+> `examples/toy_dataset/`. You can copy the folder, adjust coordinates/demands or
+> vehicle capacities, and point a new config file at your modified tables. If you
+> omit the optional distance matrix in your own configs, the pipeline will compute
+> Euclidean distances from the coordinates on the fly.
 
 ## Notes
 

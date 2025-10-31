@@ -19,8 +19,29 @@ VEH_FIXED_COST= 1
 VEH_MAX_DUR   = 2
 F_VEH_F       = 3
 
-# routes/state
+# routes/state (core floats)
 F_LOAD = 0
 F_DIST = 1
 F_COST = 2
 F_VEC0 = 3  # start index for vector dims (not used in this minimal demo)
+
+# dimension behaviour modes
+DIM_MODE_ADD = 0
+DIM_MODE_MAX = 1
+DIM_MODE_FUNC = 2
+
+# time state floats
+T_ARR   = 0
+T_START = 1
+T_LEAVE = 2
+T_LATE  = 3
+T_SLACK = 4
+T_WAIT  = 5
+F_TIME_F = 6
+
+# penalty vector indices
+P_CAP = 0
+P_DUR = 1
+P_TW  = 2
+P_UNS = 3
+F_PEN = 4
